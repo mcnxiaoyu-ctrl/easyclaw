@@ -375,20 +375,23 @@ if [ "$PIPELINE_FAILED" = false ] && [ "$SKIP_TESTS" = false ]; then
   step_start=$SECONDS
 
   # Kill stale gateway processes left over from dev e2e to avoid port conflicts.
-  # On Windows the gateway can't rebind port 28789 while the old process holds it.
-  # We kill by PORT (28789) rather than process name because during dev e2e
-  # the gateway runs as electron.exe/node, not openclaw.exe.
+  # With 4 parallel workers, gateways bind to ports 28789, 28889, 28989, 29089
+  # (base + workerIndex * 100). Kill all of them.
+  GATEWAY_PORTS="28789 28889 28989 29089"
   if [ "$PLATFORM" = "win" ]; then
-    info "Killing stale gateway processes on port 28789 (if any)..."
-    for pid in $(netstat -ano 2>/dev/null | grep ":28789 .*LISTENING" | awk '{print $5}' | sort -u); do
-      taskkill //T //F //PID "$pid" 2>/dev/null || true
+    info "Killing stale gateway processes on ports $GATEWAY_PORTS (if any)..."
+    for port in $GATEWAY_PORTS; do
+      for pid in $(netstat -ano 2>/dev/null | grep ":$port .*LISTENING" | awk '{print $5}' | sort -u); do
+        taskkill //T //F //PID "$pid" 2>/dev/null || true
+      done
     done
-    # Wait for the port to be released
+    # Wait for the ports to be released
     sleep 2
   else
-    info "Killing stale gateway processes on port 28789 (if any)..."
-    lsof -ti :28789 | xargs kill -9 2>/dev/null || true
-    pkill -f "openclaw.*gateway" 2>/dev/null || true
+    info "Killing stale gateway processes on ports $GATEWAY_PORTS (if any)..."
+    for port in $GATEWAY_PORTS; do
+      lsof -ti :"$port" | xargs kill -9 2>/dev/null || true
+    done
     sleep 1
   fi
 
