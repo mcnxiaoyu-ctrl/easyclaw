@@ -86,7 +86,7 @@ export function ChatPage({ onAgentNameChange }: { onAgentNameChange?: (name: str
       setPendingImages(state.pendingImages);
       setVisibleCount(state.visibleCount);
       setAllFetched(state.allFetched);
-      shouldInstantScrollRef.current = true;
+      shouldInstantScrollRef.current = true; stickyRef.current = true;
       fetchLimitRef.current = FETCH_BATCH;
       isFetchingRef.current = false;
       trackerRef.current.reset();
@@ -121,23 +121,27 @@ export function ChatPage({ onAgentNameChange }: { onAgentNameChange?: (name: str
   const lastAgentStreamRef = useRef<string | null>(null);
   const showAgentEventsRef = useRef(true);
 
+  // "Sticky to bottom" — an explicit pinned state drives auto-scroll.
+  // • User scrolls up → unpin (handled in handleScroll).
+  // • User scrolls back to bottom / sends a message → re-pin.
+  // • Content changes while pinned → synchronous scrollTop assignment.
+  const stickyRef = useRef(true);
+
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = messagesContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight - el.clientHeight;
+    }
+    stickyRef.current = true;
   }, []);
 
   useEffect(() => {
     if (isLoadingMoreRef.current) return;
     if (shouldInstantScrollRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+      scrollToBottom();
       shouldInstantScrollRef.current = false;
-    } else {
-      // Only auto-scroll if the user is already near the bottom.
-      // If they scrolled up to read earlier messages, don't yank them back.
-      const el = messagesContainerRef.current;
-      if (el) {
-        const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distFromBottom < 150) scrollToBottom();
-      }
+    } else if (stickyRef.current) {
+      scrollToBottom();
     }
   }, [messages, streaming, runId, scrollToBottom]);
 
@@ -177,11 +181,12 @@ export function ChatPage({ onAgentNameChange }: { onAgentNameChange?: (name: str
     }
   }, []);
 
-  // Load older messages on scroll to top
+  // Load older messages on scroll to top; track sticky state.
   const handleScroll = useCallback(() => {
     const el = messagesContainerRef.current;
     if (!el || isLoadingMoreRef.current || isFetchingRef.current) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickyRef.current = distanceFromBottom < 30;
     setShowScrollBtn(distanceFromBottom > 150);
     if (el.scrollTop < 50) {
       // All cached messages visible — try fetching more from gateway
@@ -232,7 +237,7 @@ export function ChatPage({ onAgentNameChange }: { onAgentNameChange?: (name: str
       if (parsed.length === 0 && messagesLengthRef.current > 0) return;
       parsed = await restoreImages(sessionKeyRef.current, parsed).catch(() => parsed);
       setAllFetched(parsed.length < FETCH_BATCH);
-      shouldInstantScrollRef.current = true;
+      shouldInstantScrollRef.current = true; stickyRef.current = true;
       setMessages(parsed);
       setVisibleCount(INITIAL_VISIBLE);
     } catch {
@@ -738,7 +743,7 @@ export function ChatPage({ onAgentNameChange }: { onAgentNameChange?: (name: str
     if (optimisticImages) {
       saveImages(sessionKeyRef.current, sentAt, optimisticImages).catch(() => {});
     }
-    shouldInstantScrollRef.current = true;
+    shouldInstantScrollRef.current = true; stickyRef.current = true;
     setDraft("");
     setPendingImages([]);
     setRunId(idempotencyKey);
