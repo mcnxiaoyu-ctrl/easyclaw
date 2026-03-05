@@ -80,15 +80,15 @@ if (existsSync(UPDATE_MARKER)) {
         _updateBlocked = true;
       } else {
         // Marker is stale (>5 min) — installation probably failed, clean up.
-        try { unlinkSync(UPDATE_MARKER); } catch {}
+        try { unlinkSync(UPDATE_MARKER); } catch { }
       }
     } else {
       // Version matches (new app) or empty marker — installation complete, clean up.
-      try { unlinkSync(UPDATE_MARKER); } catch {}
+      try { unlinkSync(UPDATE_MARKER); } catch { }
     }
   } catch {
     // Malformed marker — clean up.
-    try { unlinkSync(UPDATE_MARKER); } catch {}
+    try { unlinkSync(UPDATE_MARKER); } catch { }
   }
 }
 
@@ -113,7 +113,7 @@ if (!gotTheLock) {
         try {
           process.kill(pid, "SIGKILL");
           killedStale = true;
-        } catch {}
+        } catch { }
       }
     } else {
       // On macOS/Linux, use pgrep
@@ -130,10 +130,10 @@ if (!gotTheLock) {
         try {
           process.kill(pid, "SIGKILL");
           killedStale = true;
-        } catch {}
+        } catch { }
       }
     }
-  } catch {}
+  } catch { }
 
   if (killedStale) {
     // Stale process found and killed — relaunch so the new instance gets the lock
@@ -335,6 +335,10 @@ app.whenReady().then(async () => {
   // PKCE verifier for pending manual OAuth flow (between start and manual-complete steps)
   let pendingManualOAuthVerifier: string | null = null;
 
+  // One-time backfill: ensure existing allowFrom entries have channel_recipients rows as owners
+  const { backfillOwnerMigration } = await import("./owner-migration.js");
+  await backfillOwnerMigration(storage, stateDir, configPath);
+
   // Build gateway config helpers (closures bound to current settings)
   const { buildFullGatewayConfig } = createGatewayConfigBuilder({
     storage, locale, configPath, stateDir, extensionsDir, sttCliPath, filePermissionsPluginPath,
@@ -366,10 +370,10 @@ app.whenReady().then(async () => {
           }
         }
         for (const pid of pids) {
-          try { execSync(`taskkill /T /F /PID ${pid}`, { stdio: "ignore", shell: "cmd.exe" }); } catch {}
+          try { execSync(`taskkill /T /F /PID ${pid}`, { stdio: "ignore", shell: "cmd.exe" }); } catch { }
         }
         // Also try by name as fallback for packaged openclaw binaries
-        try { execSync("taskkill /f /im openclaw-gateway.exe 2>nul & taskkill /f /im openclaw.exe 2>nul & exit /b 0", { stdio: "ignore", shell: "cmd.exe" }); } catch {}
+        try { execSync("taskkill /f /im openclaw-gateway.exe 2>nul & taskkill /f /im openclaw.exe 2>nul & exit /b 0", { stdio: "ignore", shell: "cmd.exe" }); } catch { }
       } else {
         execSync(`lsof -ti :${resolveGatewayPort()} | xargs kill -9 2>/dev/null || true`, { stdio: "ignore" });
         // Use killall (~10ms) instead of pkill which can take 20-50s on macOS
@@ -424,6 +428,16 @@ app.whenReady().then(async () => {
       deviceIdentityPath: join(stateDir, "identity", "device.json"),
       onConnect: () => {
         log.info("Gateway RPC client connected");
+
+        // Start Mobile Sync engine if a pairing exists
+        const pairing = storage.mobilePairings.getActivePairing();
+        if (pairing) {
+          rpcClient?.request("mobile_chat_start_sync", {
+            accessToken: pairing.accessToken,
+            relayUrl: pairing.relayUrl,
+            desktopDeviceId: pairing.deviceId
+          }).catch((e: unknown) => log.error("Failed to start Mobile Sync on connect:", e));
+        }
       },
       onClose: () => {
         log.info("Gateway RPC client disconnected");
@@ -645,12 +659,12 @@ app.whenReady().then(async () => {
         },
         updateInfo: updater.getLatestInfo()
           ? {
-              latestVersion: updater.getLatestInfo()!.version,
-              onDownload: () => {
-                showMainWindow();
-                updater.download().catch((e: unknown) => log.error("Update download failed:", e));
-              },
-            }
+            latestVersion: updater.getLatestInfo()!.version,
+            onDownload: () => {
+              showMainWindow();
+              updater.download().catch((e: unknown) => log.error("Update download failed:", e));
+            },
+          }
           : undefined,
       }, systemLocale),
     );
@@ -778,9 +792,24 @@ app.whenReady().then(async () => {
 
   // Listen to gateway events
   let firstStart = true;
+
+  // Safety net: if the gateway doesn't emit "started" within 10 seconds,
+  // show the window anyway so the user isn't left staring at nothing.
+  // This covers scenarios where spawn() fails, the binary is missing,
+  // or the child process crashes before producing output.
+  const startupTimeout = setTimeout(() => {
+    if (firstStart && mainWindow) {
+      log.warn("Gateway did not start within 10s — showing window anyway");
+      firstStart = false;
+      mainWindow.loadURL(PANEL_URL);
+      showMainWindow();
+    }
+  }, 10_000);
+
   launcher.on("started", () => {
     log.info("Gateway started");
     updateTray("running");
+    clearTimeout(startupTimeout);
 
     if (firstStart) {
       firstStart = false;
@@ -817,13 +846,13 @@ app.whenReady().then(async () => {
     log.error("Gateway error:", error);
   });
 
+  // Sanitize paths to remove usernames (e.g., /Users/john/... → ~/...)
+  const sanitizePath = (s: string) =>
+    s.replace(/(?:\/Users\/|\/home\/|C:\\Users\\)[^\s/\\]+/gi, "~");
+
   // Track uncaught exceptions
   process.on("uncaughtException", (error) => {
     log.error("Uncaught exception:", error);
-
-    // Sanitize paths to remove usernames (e.g., /Users/john/... → ~/...)
-    const sanitizePath = (s: string) =>
-      s.replace(/(?:\/Users\/|\/home\/|C:\\Users\\)[^\s/\\]+/gi, "~");
 
     // Track error event with truncated + sanitized stack trace (first 5 lines)
     const stackLines = error.stack?.split("\n") ?? [];
@@ -832,6 +861,23 @@ app.whenReady().then(async () => {
     telemetryClient?.track("app.error", {
       errorMessage: sanitizePath(error.message),
       errorStack: truncatedStack,
+    });
+  });
+
+  // Prevent silent process termination from unhandled Promise rejections.
+  // Without this, a rejected promise (e.g. during gateway startup) can kill
+  // the Electron process with no error log on Windows.
+  process.on("unhandledRejection", (reason) => {
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    log.error("Unhandled rejection:", error);
+
+    const stackLines = error.stack?.split("\n") ?? [];
+    const truncatedStack = sanitizePath(stackLines.slice(0, 5).join("\n"));
+
+    telemetryClient?.track("app.error", {
+      errorMessage: sanitizePath(error.message),
+      errorStack: truncatedStack,
+      type: "unhandledRejection",
     });
   });
 
