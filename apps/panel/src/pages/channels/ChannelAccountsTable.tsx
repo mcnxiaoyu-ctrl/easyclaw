@@ -91,6 +91,44 @@ export function ChannelAccountsTable({
     return () => { cancelled = true; clearInterval(timer); };
   }, [expandedChannels.has("mobile")]);
 
+  // Background refresh: update recipient data without resetting to loading state
+  async function refreshRecipientData(channelId: string) {
+    try {
+      const [result, requests] = await Promise.all([
+        fetchAllowlist(channelId),
+        fetchPairingRequests(channelId),
+      ]);
+      setRecipientData(prev => ({
+        ...prev,
+        [channelId]: {
+          loading: false,
+          error: null,
+          allowlist: result.allowlist,
+          labels: result.labels,
+          owners: result.owners ?? {},
+          pairingRequests: requests,
+        },
+      }));
+    } catch {
+      // Silently ignore background refresh errors to avoid disrupting the UI
+    }
+  }
+
+  // Poll recipient data (pairing requests + allowlist) for expanded non-mobile channels
+  useEffect(() => {
+    const nonMobileExpanded = Array.from(expandedChannels).filter(ch => ch !== "mobile");
+    if (nonMobileExpanded.length === 0) return;
+
+    let cancelled = false;
+    const timer = setInterval(() => {
+      if (cancelled) return;
+      for (const channelId of nonMobileExpanded) {
+        refreshRecipientData(channelId);
+      }
+    }, 5_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [expandedChannels]);
+
   async function loadRecipientData(channelId: string) {
     setRecipientData(prev => ({
       ...prev,
