@@ -1,5 +1,15 @@
 [
   {
+    "version": "1.6.4",
+    "date": "2026-03-10",
+    "en": [
+      "Split mobile install and pairing into two-step flow for Safari PWA compatibility"
+    ],
+    "zh": [
+      "手机端安装和配对拆分为两步流程，兼容 Safari PWA"
+    ]
+  },
+  {
     "version": "1.6.3",
     "date": "2026-03-07",
     "en": [
