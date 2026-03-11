@@ -8,13 +8,58 @@ export interface ChannelFieldConfig {
   isSecret?: boolean;            // Store in secrets (vs config)
   defaultValue?: string | number;
   options?: Array<{value: string; label: string}>; // For select fields
+  showWhen?: { field: string; value: string | string[] }; // Conditional visibility
 }
 
 export interface ChannelSchema {
   fields: ChannelFieldConfig[];
-  commonFields?: {               // Common fields like dmPolicy, enabled
-    dmPolicy?: boolean;
+  commonFields?: {               // Common fields like enabled
     enabled?: boolean;
+  };
+}
+
+// Shared dmPolicy options: pairing, allowlist, disabled (excludes "open" for security)
+const DM_POLICY_OPTIONS: ChannelFieldConfig["options"] = [
+  { value: "pairing", label: "channels.dmPolicyPairing" },
+  { value: "allowlist", label: "channels.dmPolicyAllowlist" },
+  // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
+  { value: "disabled", label: "channels.dmPolicyDisabled" },
+];
+
+// Feishu variant: no "disabled" option, vendor schema only supports open/pairing/allowlist
+const DM_POLICY_OPTIONS_NO_DISABLED: ChannelFieldConfig["options"] = [
+  { value: "pairing", label: "channels.dmPolicyPairing" },
+  { value: "allowlist", label: "channels.dmPolicyAllowlist" },
+  // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk
+];
+
+// Shared groupPolicy options
+const GROUP_POLICY_OPTIONS: ChannelFieldConfig["options"] = [
+  { value: "open", label: "channels.groupPolicyOpen" },
+  { value: "allowlist", label: "channels.groupPolicyAllowlist" },
+  { value: "disabled", label: "channels.groupPolicyDisabled" },
+];
+
+function dmPolicyField(options: ChannelFieldConfig["options"] = DM_POLICY_OPTIONS): ChannelFieldConfig {
+  return {
+    id: "dmPolicy",
+    label: "channels.fieldDmPolicy",
+    type: "select",
+    required: false,
+    defaultValue: "pairing",
+    options,
+  };
+}
+
+function groupPolicyField(): ChannelFieldConfig {
+  return {
+    id: "groupPolicy",
+    label: "channels.fieldGroupPolicy",
+    type: "select",
+    required: false,
+    defaultValue: "open",
+    options: GROUP_POLICY_OPTIONS,
+    hint: "channels.fieldGroupPolicyHint",
   };
 }
 
@@ -38,34 +83,10 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         placeholder: "channels.fieldWebhookUrlPlaceholder",
         hint: "channels.fieldWebhookUrlHint",
       },
-      {
-        id: "dmPolicy",
-        label: "channels.fieldDmPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-          { value: "disabled", label: "channels.dmPolicyDisabled" },
-        ],
-      },
-      {
-        id: "groupPolicy",
-        label: "channels.fieldGroupPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "open",
-        options: [
-          { value: "open", label: "channels.groupPolicyOpen" },
-          { value: "allowlist", label: "channels.groupPolicyAllowlist" },
-          { value: "disabled", label: "channels.groupPolicyDisabled" },
-        ],
-        hint: "channels.fieldGroupPolicyHint",
-      },
+      dmPolicyField(),
+      groupPolicyField(),
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   feishu: {
@@ -110,8 +131,50 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
           { value: "webhook", label: "Webhook" },
         ],
       },
+      {
+        id: "verificationToken",
+        label: "channels.feishuVerificationToken",
+        type: "password",
+        required: false,
+        placeholder: "channels.feishuVerificationTokenPlaceholder",
+        hint: "channels.feishuVerificationTokenHint",
+        isSecret: true,
+        showWhen: { field: "connectionMode", value: "webhook" },
+      },
+      {
+        id: "encryptKey",
+        label: "channels.feishuEncryptKey",
+        type: "password",
+        required: false,
+        placeholder: "channels.feishuEncryptKeyPlaceholder",
+        hint: "channels.feishuEncryptKeyHint",
+        isSecret: true,
+        showWhen: { field: "connectionMode", value: "webhook" },
+      },
+      dmPolicyField(DM_POLICY_OPTIONS_NO_DISABLED),
+      {
+        id: "groupPolicy",
+        label: "channels.fieldGroupPolicy",
+        type: "select",
+        required: false,
+        defaultValue: "allowlist",
+        options: GROUP_POLICY_OPTIONS,
+        hint: "channels.feishuGroupPolicyHint",
+      },
+      {
+        id: "requireMention",
+        label: "channels.feishuRequireMention",
+        type: "select",
+        required: false,
+        defaultValue: "true",
+        options: [
+          { value: "true", label: "channels.requireMentionTrue" },
+          { value: "false", label: "channels.requireMentionFalse" },
+        ],
+        hint: "channels.feishuRequireMentionHint",
+      },
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   line: {
@@ -135,7 +198,7 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         isSecret: true,
       },
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   matrix: {
@@ -201,7 +264,7 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         hint: "channels.mattermostBaseUrlHint",
       },
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   msteams: {
@@ -232,7 +295,7 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         hint: "channels.msteamsTenantIdHint",
       },
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   discord: {
@@ -246,21 +309,9 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         hint: "channels.discordTokenHint",
         isSecret: true,
       },
-      {
-        id: "dmPolicy",
-        label: "channels.fieldDmPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-          { value: "disabled", label: "channels.dmPolicyDisabled" },
-        ],
-      },
+      dmPolicyField(),
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   slack: {
@@ -295,21 +346,9 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         ],
         hint: "channels.slackModeHint",
       },
-      {
-        id: "dmPolicy",
-        label: "channels.fieldDmPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-          { value: "disabled", label: "channels.dmPolicyDisabled" },
-        ],
-      },
+      dmPolicyField(),
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   googlechat: {
@@ -330,21 +369,9 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         placeholder: "channels.googlechatWebhookUrlPlaceholder",
         hint: "channels.googlechatWebhookUrlHint",
       },
-      {
-        id: "dmPolicy",
-        label: "channels.fieldDmPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-          { value: "disabled", label: "channels.dmPolicyDisabled" },
-        ],
-      },
+      dmPolicyField(),
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   whatsapp: {
@@ -355,15 +382,11 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         type: "select",
         required: false,
         defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-        ],
+        options: DM_POLICY_OPTIONS_NO_DISABLED,
         hint: "channels.whatsappSetupHint",
       },
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   signal: {
@@ -384,21 +407,9 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         placeholder: "channels.signalHttpUrlPlaceholder",
         hint: "channels.signalHttpUrlHint",
       },
-      {
-        id: "dmPolicy",
-        label: "channels.fieldDmPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-          { value: "disabled", label: "channels.dmPolicyDisabled" },
-        ],
-      },
+      dmPolicyField(),
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 
   imessage: {
@@ -416,20 +427,8 @@ export const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         ],
         hint: "channels.imessageServiceHint",
       },
-      {
-        id: "dmPolicy",
-        label: "channels.fieldDmPolicy",
-        type: "select",
-        required: false,
-        defaultValue: "pairing",
-        options: [
-          { value: "pairing", label: "channels.dmPolicyPairing" },
-          { value: "allowlist", label: "channels.dmPolicyAllowlist" },
-          // { value: "open", label: "channels.dmPolicyOpen" }, // Disabled — security risk: allows any stranger to chat without approval
-          { value: "disabled", label: "channels.dmPolicyDisabled" },
-        ],
-      },
+      dmPolicyField(),
     ],
-    commonFields: { dmPolicy: true, enabled: true },
+    commonFields: { enabled: true },
   },
 };

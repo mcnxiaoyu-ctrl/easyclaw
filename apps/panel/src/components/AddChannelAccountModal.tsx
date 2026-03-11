@@ -73,8 +73,15 @@ export function AddChannelAccountModal({
       return;
     }
 
-    // Validate required fields
+    // Validate required fields (skip hidden fields)
     for (const field of schema.fields) {
+      if (field.showWhen) {
+        const depValue = formData[field.showWhen.field];
+        const matches = Array.isArray(field.showWhen.value)
+          ? field.showWhen.value.includes(depValue)
+          : depValue === field.showWhen.value;
+        if (!matches) continue;
+      }
       if (field.required) {
         const value = formData[field.id];
         // For create mode, always require the field
@@ -106,6 +113,14 @@ export function AddChannelAccountModal({
       }
 
       schema.fields.forEach(field => {
+        // Skip fields hidden by showWhen
+        if (field.showWhen) {
+          const depValue = formData[field.showWhen.field];
+          const matches = Array.isArray(field.showWhen.value)
+            ? field.showWhen.value.includes(depValue)
+            : depValue === field.showWhen.value;
+          if (!matches) return;
+        }
         const value = formData[field.id];
         if (value !== undefined && value !== "") {
           if (field.isSecret) {
@@ -212,7 +227,14 @@ export function AddChannelAccountModal({
         </div>
 
         {/* Dynamic channel-specific fields */}
-        {schema.fields.map(field => (
+        {schema.fields.filter(field => {
+          if (!field.showWhen) return true;
+          const depValue = formData[field.showWhen.field];
+          if (Array.isArray(field.showWhen.value)) {
+            return field.showWhen.value.includes(depValue);
+          }
+          return depValue === field.showWhen.value;
+        }).map(field => (
           <div key={field.id}>
             <label className="form-label-block">
               {t(field.label)}{field.required && !isEdit && " *"}
